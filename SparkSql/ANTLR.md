@@ -139,6 +139,39 @@ INT : [0-9]+ ;
 WS  : [\t\r\n]+ -> skip ; 
 ```
 
+### 程序测试
+
+执行如下的语句
+
+```shell
+antlr4 ArrayInit.g4
+javac *.java
+grun ArrayInit init -tokens
+{99,1,12}
+EOF
+```
+
+可以得到如下的结果
+
+![image-20181119223624634](https://ws4.sinaimg.cn/large/006tNbRwly1fxdqybdq1uj30r009ywix.jpg)
+
+结果解析
+
+- 每一行为一个语法符号,从0开始计数
+- 以@1这行为例,@1代表为第2个语法符号，1:2代表第1到2字符,<4>代表类型为INT.
+
+同时可以使用-gui参数执行语法识别 `grun ArrayInit init -gui`,可以得到如下的语法符号
+
+![image-20181119224221171](https://ws2.sinaimg.cn/large/006tNbRwly1fxdr4jy8mtj30dq0fwgm8.jpg)
+
+
+
+
+
+
+
+
+
 
 
 

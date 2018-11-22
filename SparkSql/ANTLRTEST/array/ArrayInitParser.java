@@ -59,6 +59,11 @@ public class ArrayInitParser extends Parser {
 		public void exitRule(ParseTreeListener listener) {
 			if ( listener instanceof ArrayInitListener ) ((ArrayInitListener)listener).exitInit(this);
 		}
+		@Override
+		public <T> T accept(ParseTreeVisitor<? extends T> visitor) {
+			if ( visitor instanceof ArrayInitVisitor ) return ((ArrayInitVisitor<? extends T>)visitor).visitInit(this);
+			else return visitor.visitChildren(this);
+		}
 	}
 
 	public final InitContext init() throws RecognitionException {
@@ -114,6 +119,11 @@ public class ArrayInitParser extends Parser {
 		@Override
 		public void exitRule(ParseTreeListener listener) {
 			if ( listener instanceof ArrayInitListener ) ((ArrayInitListener)listener).exitValue(this);
+		}
+		@Override
+		public <T> T accept(ParseTreeVisitor<? extends T> visitor) {
+			if ( visitor instanceof ArrayInitVisitor ) return ((ArrayInitVisitor<? extends T>)visitor).visitValue(this);
+			else return visitor.visitChildren(this);
 		}
 	}
 
