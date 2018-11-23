@@ -1,12 +1,54 @@
+hive的config配置在HiveConf文件中
 
 
 
 
-| Config property         | Value |
-| ----------------------- | ----- |
-| hive.default.fileformat | ORC   |
-|                         |       |
-|                         |       |
+
+
+
+
+
+
+
+
+
+| Config property                   | Value                                                        | Comment                                                      |
+| --------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| hive.default.fileformat           | ORC                                                          |                                                              |
+| hive.exec.orc.default.stripe.size | `256*1024*1024` (268,435,456) in 0.13.0;                         `64*1024*1024` (67,108,864) in 0.14.0 |                                                              |
+| hive.exec.orc.default.block.size  | `256*1024*1024` (268,435,456)                                |                                                              |
+| hive.exec.orc.default.compress    | ZLIB                                                         |                                                              |
+| **hive.exec.orc.split.strategy**  | HYBRID                                                       | What strategy [ORC](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+ORC) should use to create splits for execution. The available options are "BI", "ETL" and "HYBRID".The HYBRID mode reads the footers for all files if there are fewer files than expected mapper count, switching over to generating 1 split per file if the average file sizes are smaller than the default HDFS blocksize. ETL strategy always reads the ORC footers before generating splits, while the BI strategy generates per-file splits fast without reading any data from HDFS. |
+
+
+
+orc split 
+
+> Currently, ORC generates splits based on stripe offset + stripe length.
+>
+> This means that the splits for all columnar projections are exactly the same size, despite reading the footer which gives the estimated sizes for each column.
+>
+> This is a hold-out from FileSplit which uses getLen() as the I/O cost of reading a file in a map-task.
+>
+> RCFile didn't have a footer with column statistics information, but for ORC this would be extremely useful to reduce task overheads when processing extremely wide tables with highly selective column projections.
+
+https://issues.apache.org/jira/browse/HIVE-7428
+
+**https://issues.apache.org/jira/browse/HIVE-10114**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -69,4 +111,5 @@ For integer types (tinyint, smallint, int, bigint), the column statistics includ
 #### 参考链接
 
 - [ORC Specification v0](https://orc.apache.org/specification/ORCv0/)
+- [How Map and Reduce operations are actually carried out](https://wiki.apache.org/hadoop/HadoopMapReduce)
 
