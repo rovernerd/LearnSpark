@@ -93,11 +93,64 @@ SET hive.exec.dynamic.partition = true;
 alter table tmp.par_column_type_test partition(par)change price price decimal(16,4)
 ```
 
+### 类型不一致
+
+#### 问题一
+
+使用presto查询数据无法查询(数据重刷后,hive可以查询到正确数据类型的数据)
+
+![image-20181129113544734](https://ws2.sinaimg.cn/large/006tNbRwgy1fxos23umb5j326q09mn6a.jpg)
+
+#### 问题二
+
+元数据不一致的隐患，别的查询系统使用不排除数据异常产生(spark之前查询有报错，目前没有复现😓)
+
+
+
 ## 后记
 
 修改了字段的类型，但是底层存储的数据本身的type是不会自动修改的。我们看到orc底层的meta信息还是decimal(15,3),**因此切记数据还是要重新刷新的。**
 
 ![image-20181126211301562](https://ws3.sinaimg.cn/large/006tNbRwgy1fxlrvnr7rmj32420kqwvj.jpg)
+
+### 数据修复
+
+下面sql可以查询表字段类型和分区字段类型不一致的信息
+
+```sql
+select
+a.owner,
+g.name,
+a.tbl_name,
+a.tbl_id,
+a.sd_id as table_sd_id,
+b.part_id,
+b.part_name,
+b.sd_id as part_sd_id,
+c.cd_id,
+d.column_name as par_name,
+d.type_name as par_type_name,
+f.column_name as table_name,
+f.type_name as table_type_name
+from `TBLS` a 
+left join `PARTITIONS` b 
+on a.tbl_id = b.tbl_id
+left join SDS c 
+on b.sd_id = c.sd_id
+left join `COLUMNS_V2` d 
+on c.cd_id = d.cd_id
+left join SDS e 
+on a.sd_id = e.sd_id
+left join COLUMNS_V2 f 
+on e.cd_id = f.cd_id
+left join DBS g 
+on a.db_id = g.db_id
+where  d.column_name = f.column_name 
+-- and d.type_name <> f.type_name   
+and tbl_name = 'xxx';
+```
+
+
 
 ## 参考链接
 
