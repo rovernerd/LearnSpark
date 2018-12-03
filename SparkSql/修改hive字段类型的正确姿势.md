@@ -93,6 +93,21 @@ SET hive.exec.dynamic.partition = true;
 alter table tmp.par_column_type_test partition(par)change price price decimal(16,4)
 ```
 
+##### 局限性
+
+这种修改的方式是将分区表已存在的所有分区的字段类型进行更改,如果历史的分区中不存在这个字段，执行是会报错的.
+
+`Error while processing statement: FAILED: Execution Error, return code 1 from org.apache.hadoop.hive.ql.exec.DDLTask. Invalid column reference xxx`
+
+因此增加字段的语法建议使用级联的方式进行新增,即
+
+```
+ALTER TABLE table_name 
+  [PARTITION partition_spec]                 -- (Note: Hive 0.14.0 and later)
+  ADD|REPLACE COLUMNS (col_name data_type [COMMENT col_comment], ...)
+  [CASCADE|RESTRICT]                         -- (Note: Hive 1.1.0 and later)
+```
+
 ### 类型不一致
 
 #### 问题一
