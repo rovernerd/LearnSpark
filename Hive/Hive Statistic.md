@@ -186,5 +186,94 @@ WHERE A.TBL_NAME = 'test_statistic_p'  AND PART_NAME = 'par=20181207'
 analyze table dev.test_statistic_p partition(par) compute statistics;
 ```
 
-Columns Statistics
+#### Columns Statistics
+
+其实column的statistic也是分为table和partition的，我们以table的column statistic进行介绍，partition的情况时类似的.
+
+##### 使用
+
+创建测试表
+
+```sql
+-- 创建表
+create table dev.test_statistic_c
+(id int ,
+ name string,
+ weight decimal(4,2),
+ is_boy boolean );
+ 
+-- 测试数据
+insert overwrite table dev.test_statistic_c
+select 1,'neil',75.2,'ture'
+union all
+select 2,'jack',80.3,'false'
+union all
+select 3,'tom',69.3,'ture';
+
+```
+
+这里hive本身并不会自动的搜集statistic信息,需要手动执行analyze语句进行搜集。
+
+```sql
+analyze table dev.test_statistic_c compute statistics for columns;
+```
+
+执行analyze语句会触发一个mr任务去计算这些列的数据.
+
+可以使用` desc `
+
+
+
+https://issues.apache.org/jira/browse/HIVE-7060
+
+
+
+`desc formatted dev.test_statistic_t id` 
+
+##### 存储
+
+同样以column statistics为例说明，先来看存储的表结构.
+
+```sql
+CREATE TABLE `TAB_COL_STATS` (
+  `CS_ID` bigint(20) NOT NULL,
+  `AVG_COL_LEN` double DEFAULT NULL,
+  `COLUMN_NAME` varchar(767) CHARACTER SET latin1 COLLATE latin1_bin NOT NULL,
+  `COLUMN_TYPE` varchar(128) CHARACTER SET latin1 COLLATE latin1_bin NOT NULL,
+  `DB_NAME` varchar(128) CHARACTER SET latin1 COLLATE latin1_bin NOT NULL,
+  `BIG_DECIMAL_HIGH_VALUE` varchar(255) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,
+  `BIG_DECIMAL_LOW_VALUE` varchar(255) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,
+  `DOUBLE_HIGH_VALUE` double DEFAULT NULL,
+  `DOUBLE_LOW_VALUE` double DEFAULT NULL,
+  `LAST_ANALYZED` bigint(20) NOT NULL,
+  `LONG_HIGH_VALUE` bigint(20) DEFAULT NULL,
+  `LONG_LOW_VALUE` bigint(20) DEFAULT NULL,
+  `MAX_COL_LEN` bigint(20) DEFAULT NULL,
+  `NUM_DISTINCTS` bigint(20) DEFAULT NULL,
+  `NUM_FALSES` bigint(20) DEFAULT NULL,
+  `NUM_NULLS` bigint(20) NOT NULL,
+  `NUM_TRUES` bigint(20) DEFAULT NULL,
+  `TBL_ID` bigint(20) DEFAULT NULL,
+  `TABLE_NAME` varchar(128) CHARACTER SET latin1 COLLATE latin1_bin NOT NULL,
+  PRIMARY KEY (`CS_ID`),
+  KEY `TAB_COL_STATS_N49` (`TBL_ID`),
+  CONSTRAINT `TAB_COL_STATS_FK1` FOREIGN KEY (`TBL_ID`) REFERENCES `TBLS` (`TBL_ID`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
