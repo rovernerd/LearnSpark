@@ -82,11 +82,67 @@ Local Work的过程主要有下面几步
 - 将hashtable file上传到hdfs
 - 加载hashtable file到分布式缓存
 
-从上面的报错日志来看,OOM出现在内存中构建hashtable这个过程中，在客户端本地会在启动一个`ExecDriver`,在这个driver中进行小表的扫描和hashtable的构建。
+从上面的报错日志来看,OOM出现在内存中构建hashtable这个过程中。
+
+
+
+先来看下Local Task的相关过程
+
+通过参数`hive.exec.submit.local.task.via.child`来执行是直接在driver的进程中直接执行还是另起一个JVM执行LocalTask.默认为true,即另起一个child JVM取跑local task.
+
+官方对于这个参数的解释
+
+> Determines whether local tasks (typically mapjoin hashtable generation phase) runs in 
+> separate JVM (true recommended) or not.Avoids the overhead of spawning new JVM, but can lead to out-of-memory issues.
+
+相关的代码
+
+```java
+@Override
+public int execute(DriverContext driverContext) {
+  if (conf.getBoolVar(HiveConf.ConfVars.SUBMITLOCALTASKVIACHILD)) {
+    // send task off to another jvm
+    return executeInChildVM(driverContext);
+  } else {
+    // execute in process
+    return executeInProcess(driverContext);
+  }
+}
+```
+
+看`executeInChildVM`  的代码,在客户端本地会在启动一个  ` ExecDriver`,在这个driver中进行小表的扫描和hashtable的构建。
 
 启动ExecDriver的过程
 
-从源码来看,在`HashTableSinkOperator`中要进行内存的检查
+```java
+// Run ExecDriver in another JVM
+executor = Runtime.getRuntime().exec(cmdLine, env, new File(workDir));
+```
+
+接下来看整个执行过程
+
+- MapredLocalTask.execute
+- executeInChildVM(driverContext)
+- executor = Runtime.getRuntime().exec(cmdLine, env, new File(workDir))
+- ExecDriver.main()
+- ed.executeInProcess(new DriverContext())
+- startForward(null)
+- startForward(inputFileChangeSenstive, null)
+- 执行operator(TableScan/HashTableSinkOperator)
+
+在启动ExecDriver这一个过程,需要执行java -jar，执行的cmd命令格式如下
+
+```shell
+/opt/hadoop/bin/hadoop jar 
+/opt/hive/lib/hive-common-2.1.1.jar 
+org.apache.hadoop.hive.ql.exec.mr.ExecDriver 
+-localtask 
+-plan 
+file:/tmp/app/4ed247ca-31a2-4ee7-8985-aefe519f6ce3/hive_2018-12-28_17-53-44_294_5009425881462039040-11/-local-10007/plan.xml   
+-jobconffile file:/tmp/app/4ed247ca-31a2-4ee7-8985-aefe519f6ce3/hive_2018-12-28_17-53-44_294_5009425881462039040-11/-local-10008/jobconf.xml
+```
+
+从源码来看,执行到`HashTableSinkOperator`要进行内存的检查
 
 ```java
 
@@ -174,6 +230,124 @@ Stage7即为MR local task,但是他还有一个backup stage，即Stage1,Stage1�
 
 目前集群的noconditionaltask设置为ture,同时案例中的3个小表大小之和小于10m，因此就中招了，汗～
 
+
+
+具体来看代码,这段处理逻辑在`CommonJoinTaskDispatcher`类的processCurrentTask中
+
+```java
+try {
+      long aliasTotalKnownInputSize =
+          getTotalKnownInputSize(context, currWork, pathToAliases, aliasToSize);
+
+      Set<Integer> bigTableCandidates = MapJoinProcessor.getBigTableCandidates(joinDesc
+          .getConds());
+
+      // no table could be the big table; there is no need to convert
+      if (bigTableCandidates.isEmpty()) {
+        return null;
+      }
+
+      // if any of bigTableCandidates is from multi-sourced, bigTableCandidates should
+      // only contain multi-sourced because multi-sourced cannot be hashed or direct readable
+      bigTableCandidates = multiInsertBigTableCheck(joinOp, bigTableCandidates);
+
+      Configuration conf = context.getConf();
+
+      // If sizes of at least n-1 tables in a n-way join is known, and their sum is smaller than
+      // the threshold size, convert the join into map-join and don't create a conditional task
+      boolean convertJoinMapJoin = HiveConf.getBoolVar(conf,
+          HiveConf.ConfVars.HIVECONVERTJOINNOCONDITIONALTASK);
+      int bigTablePosition = -1;
+      if (convertJoinMapJoin) {
+        // This is the threshold that the user has specified to fit in mapjoin
+        long mapJoinSize = HiveConf.getLongVar(conf,
+            HiveConf.ConfVars.HIVECONVERTJOINNOCONDITIONALTASKTHRESHOLD);
+
+        Long bigTableSize = null;
+        Set<String> aliases = aliasToWork.keySet();
+        for (int tablePosition : bigTableCandidates) {
+          Operator<?> parent = joinOp.getParentOperators().get(tablePosition);
+          Set<String> participants = GenMapRedUtils.findAliases(currWork, parent);
+          long sumOfOthers = Utilities.sumOfExcept(aliasToSize, aliases, participants);
+          if (sumOfOthers < 0 || sumOfOthers > mapJoinSize) {
+            continue; // some small alias is not known or too big
+          }
+          if (bigTableSize == null && bigTablePosition >= 0 && tablePosition < bigTablePosition) {
+            continue; // prefer right most alias
+          }
+          long aliasSize = Utilities.sumOf(aliasToSize, participants);
+          if (bigTableSize == null || bigTableSize < 0 || (aliasSize >= 0 && aliasSize >= bigTableSize)) {
+            bigTablePosition = tablePosition;
+            bigTableSize = aliasSize;
+          }
+        }
+      }
+
+      currWork.setLeftInputJoin(joinOp.getConf().isLeftInputJoin());
+      currWork.setBaseSrc(joinOp.getConf().getBaseSrc());
+      currWork.setMapAliases(joinOp.getConf().getMapAliases());
+
+      if (bigTablePosition >= 0) {
+        // create map join task and set big table as bigTablePosition
+        MapRedTask newTask = convertTaskToMapJoinTask(currTask.getWork(), bigTablePosition);
+
+        newTask.setTaskTag(Task.MAPJOIN_ONLY_NOBACKUP);
+        newTask.setFetchSource(currTask.isFetchSource());
+        replaceTask(currTask, newTask);
+
+        // Can this task be merged with the child task. This can happen if a big table is being
+        // joined with multiple small tables on different keys
+        if ((newTask.getChildTasks() != null) && (newTask.getChildTasks().size() == 1)) {
+          mergeMapJoinTaskIntoItsChildMapRedTask(newTask, conf);
+        }
+
+        return newTask;
+      }
+
+      long ThresholdOfSmallTblSizeSum = HiveConf.getLongVar(conf,
+          HiveConf.ConfVars.HIVESMALLTABLESFILESIZE);
+      for (int pos = 0; pos < joinOp.getNumParent(); pos++) {
+        // this table cannot be big table
+        if (!bigTableCandidates.contains(pos)) {
+          continue;
+        }
+        // deep copy a new mapred work from xml
+        // Once HIVE-4396 is in, it would be faster to use a cheaper method to clone the plan
+        MapredWork newWork = SerializationUtilities.clonePlan(currTask.getWork());
+
+        // create map join task and set big table as i
+        MapRedTask newTask = convertTaskToMapJoinTask(newWork, pos);
+
+        Operator<?> startOp = joinOp.getParentOperators().get(pos);
+        Set<String> aliases = GenMapRedUtils.findAliases(currWork, startOp);
+
+        long aliasKnownSize = Utilities.sumOf(aliasToSize, aliases);
+        if (cannotConvert(aliasKnownSize, aliasTotalKnownInputSize, ThresholdOfSmallTblSizeSum)) {
+          continue;
+        }
+
+        // add into conditional task
+        listWorks.add(newTask.getWork());
+        listTasks.add(newTask);
+        newTask.setTaskTag(Task.CONVERTED_MAPJOIN);
+        newTask.setFetchSource(currTask.isFetchSource());
+
+        // set up backup task
+        newTask.setBackupTask(currTask);
+        newTask.setBackupChildrenTasks(currTask.getChildTasks());
+
+        // put the mapping task to aliases
+        taskToAliases.put(newTask, aliases);
+      }
+    } catch (Exception e) {
+      throw new SemanticException("Generate Map Join Task Error: " + e.getMessage(), e);
+    }
+```
+
+当出现上述的情况时，会更新task的tag为MAPJOIN_ONLY_NOBACKUP
+
+即如下的set语句`newTask.setTaskTag(Task.MAPJOIN_ONLY_NOBACKUP);`
+
 ### 解决
 
 最简单直接的方式就是将noconditionaltask设置为false，即当需要进行convert join时仍需要backup task.这样可以有效避免任务直接报错。
@@ -181,30 +355,9 @@ Stage7即为MR local task,但是他还有一个backup stage，即Stage1,Stage1�
 ### 参考
 
 - [LanguageManual+JoinOptimization](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+JoinOptimization)
-
-
-
+- [hive debug](https://my.oschina.net/kavn/blog/867314)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-调用过程
-
-MapredlocalTask => executeInProcess => startForward
 
 
 
