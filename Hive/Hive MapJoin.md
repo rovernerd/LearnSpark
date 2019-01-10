@@ -356,6 +356,7 @@ try {
 
 - [LanguageManual+JoinOptimization](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+JoinOptimization)
 - [hive debug](https://my.oschina.net/kavn/blog/867314)
+- [map join explain](http://www.openkb.info/2016/01/difference-between-hivemapjoinsmalltabl.html)
 
 
 
